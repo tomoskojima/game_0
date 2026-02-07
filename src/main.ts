@@ -289,14 +289,22 @@ camera.position = new Vector3(startWorld.x, 1.6, startWorld.z);
 camera.setTarget(new Vector3(startWorld.x, 1.6, startWorld.z + 1));
 
 const healthDisplay = document.getElementById("health") as HTMLDivElement | null;
+const scoreDisplay = document.getElementById("score") as HTMLDivElement | null;
 const player = {
   health: 100,
   maxHealth: 100,
+  score: 0,
 };
 
 const updateHealthUI = () => {
   if (healthDisplay) {
     healthDisplay.textContent = `Health: ${Math.ceil(player.health)}/${player.maxHealth}`;
+  }
+};
+
+const updateScoreUI = () => {
+  if (scoreDisplay) {
+    scoreDisplay.textContent = `Score: ${player.score}`;
   }
 };
 
@@ -317,9 +325,17 @@ const enemyStats: Record<
     attackCooldownMs: number;
     damage: number;
     preferredDistance?: number;
+    score: number;
   }
 > = {
-  melee: { health: 30, speed: 2.2, attackRange: 1.2, attackCooldownMs: 800, damage: 6 },
+  melee: {
+    health: 30,
+    speed: 2.2,
+    attackRange: 1.2,
+    attackCooldownMs: 800,
+    damage: 6,
+    score: 10,
+  },
   ranged: {
     health: 25,
     speed: 1.8,
@@ -327,8 +343,16 @@ const enemyStats: Record<
     attackCooldownMs: 1200,
     damage: 4,
     preferredDistance: 5,
+    score: 25,
   },
-  tank: { health: 60, speed: 1.2, attackRange: 1.5, attackCooldownMs: 1200, damage: 10 },
+  tank: {
+    health: 60,
+    speed: 1.2,
+    attackRange: 1.5,
+    attackCooldownMs: 1200,
+    damage: 10,
+    score: 50,
+  },
 };
 
 const enemies: Enemy[] = [];
@@ -394,6 +418,7 @@ const spawnEnemiesInRooms = () => {
 
 spawnEnemiesInRooms();
 updateHealthUI();
+updateScoreUI();
 
 const ammoDisplay = document.getElementById("ammo") as HTMLDivElement | null;
 const weapon = {
@@ -445,6 +470,8 @@ const fire = () => {
   }
   enemy.health -= 10;
   if (enemy.health <= 0) {
+    player.score += enemyStats[enemy.type].score;
+    updateScoreUI();
     enemyByMesh.delete(enemy.mesh);
     const index = enemies.indexOf(enemy);
     if (index >= 0) {
