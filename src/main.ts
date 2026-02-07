@@ -28,6 +28,12 @@ type Enemy = {
   baseY: number;
 };
 
+type Projectile = {
+  mesh: Mesh;
+  velocity: Vector3;
+  damage: number;
+};
+
 type Room = {
   x: number;
   y: number;
@@ -357,6 +363,7 @@ const enemyStats: Record<
 
 const enemies: Enemy[] = [];
 const enemyByMesh = new Map<Mesh, Enemy>();
+const projectiles: Projectile[] = [];
 
 const spawnEnemy = (type: EnemyType, position: Vector3) => {
   const size = type === "tank" ? 1.8 : type === "ranged" ? 1.1 : 1.2;
@@ -416,59 +423,87 @@ const spawnEnemiesInRooms = () => {
   }
 };
 
-spawnEnemiesInRooms();
-updateHealthUI();
-updateScoreUI();
+type WeaponId = "pistol" | "shotgun" | "smg";
+
+type WeaponState = {
+  id: WeaponId;
+  label: string;
+  clipSize: number;
+  ammoInClip: number;
+  ammoReserve: number;
+  fireCooldownMs: number;
+  pellets: number;
+  spread: number;
+  damage: number;
+};
 
 const ammoDisplay = document.getElementById("ammo") as HTMLDivElement | null;
-const weapon = {
-  clipSize: 12,
-  ammoInClip: 12,
-  ammoReserve: 36,
-  fireCooldownMs: 180,
+const weaponDisplay = document.getElementById("weapon") as HTMLDivElement | null;
+
+const weapons: Record<WeaponId, WeaponState> = {
+  pistol: {
+    id: "pistol",
+    label: "Pistol",
+    clipSize: 12,
+    ammoInClip: 12,
+    ammoReserve: 36,
+    fireCooldownMs: 200,
+    pellets: 1,
+    spread: 0.006,
+    damage: 10,
+  },
+  shotgun: {
+    id: "shotgun",
+    label: "Shotgun",
+    clipSize: 6,
+    ammoInClip: 6,
+    ammoReserve: 24,
+    fireCooldownMs: 650,
+    pellets: 8,
+    spread: 0.05,
+    damage: 6,
+  },
+  smg: {
+    id: "smg",
+    label: "SMG",
+    clipSize: 30,
+    ammoInClip: 30,
+    ammoReserve: 90,
+    fireCooldownMs: 90,
+    pellets: 1,
+    spread: 0.02,
+    damage: 6,
+  },
 };
+
+let currentWeapon: WeaponState = weapons.pistol;
 let lastShotTime = 0;
 
 const updateAmmoUI = () => {
   if (ammoDisplay) {
-    ammoDisplay.textContent = `Ammo: ${weapon.ammoInClip}/${weapon.ammoReserve}`;
+    ammoDisplay.textContent = `Ammo: ${currentWeapon.ammoInClip}/${currentWeapon.ammoReserve}`;
+  }
+};
+
+const updateWeaponUI = () => {
+  if (weaponDisplay) {
+    weaponDisplay.textContent = `Weapon: ${currentWeapon.label}`;
   }
 };
 
 const reload = () => {
-  const needed = weapon.clipSize - weapon.ammoInClip;
-  if (needed <= 0 || weapon.ammoReserve <= 0) {
+  const needed = currentWeapon.clipSize - currentWeapon.ammoInClip;
+  if (needed <= 0 || currentWeapon.ammoReserve <= 0) {
     return;
   }
-  const transfer = Math.min(needed, weapon.ammoReserve);
-  weapon.ammoReserve -= transfer;
-  weapon.ammoInClip += transfer;
+  const transfer = Math.min(needed, currentWeapon.ammoReserve);
+  currentWeapon.ammoReserve -= transfer;
+  currentWeapon.ammoInClip += transfer;
   updateAmmoUI();
 };
 
-const fire = () => {
-  const now = performance.now();
-  if (now - lastShotTime < weapon.fireCooldownMs) {
-    return;
-  }
-  if (weapon.ammoInClip <= 0) {
-    return;
-  }
-  lastShotTime = now;
-  weapon.ammoInClip -= 1;
-  updateAmmoUI();
-
-  const ray = camera.getForwardRay(100);
-  const pick = scene.pickWithRay(ray, (mesh) => enemyByMesh.has(mesh as Mesh));
-  if (!pick?.hit || !pick.pickedMesh) {
-    return;
-  }
-  const picked = pick.pickedMesh as Mesh;
-  const enemy = enemyByMesh.get(picked);
-  if (!enemy) {
-    return;
-  }
-  enemy.health -= 10;
+const applyDamageToEnemy = (enemy: Enemy, damage: number) => {
+  enemy.health -= damage;
   if (enemy.health <= 0) {
     player.score += enemyStats[enemy.type].score;
     updateScoreUI();
@@ -480,6 +515,77 @@ const fire = () => {
     enemy.mesh.dispose();
   }
 };
+
+const projectileMaterial = new StandardMaterial("projectile-mat", scene);
+projectileMaterial.diffuseColor = new Color3(0.95, 0.85, 0.2);
+const projectileSpeed = 8;
+const projectileLifeSeconds = 3;
+
+const spawnProjectile = (origin: Vector3, direction: Vector3, damage: number) => {
+  const mesh = MeshBuilder.CreateSphere(
+    `proj-${projectiles.length}`,
+    { diameter: 0.3 },
+    scene,
+  );
+  mesh.position = new Vector3(origin.x, origin.y, origin.z);
+  mesh.material = projectileMaterial;
+  const velocity = direction.normalize().scale(projectileSpeed);
+  const projectile: Projectile = { mesh, velocity, damage };
+  projectiles.push(projectile);
+  setTimeout(() => {
+    const index = projectiles.indexOf(projectile);
+    if (index >= 0) {
+      projectiles.splice(index, 1);
+      projectile.mesh.dispose();
+    }
+  }, projectileLifeSeconds * 1000);
+};
+
+const fire = () => {
+  const now = performance.now();
+  if (now - lastShotTime < currentWeapon.fireCooldownMs) {
+    return;
+  }
+  if (currentWeapon.ammoInClip <= 0) {
+    return;
+  }
+  lastShotTime = now;
+  currentWeapon.ammoInClip -= 1;
+  updateAmmoUI();
+
+  for (let i = 0; i < currentWeapon.pellets; i += 1) {
+    const spreadX = (Math.random() - 0.5) * currentWeapon.spread;
+    const spreadY = (Math.random() - 0.5) * currentWeapon.spread;
+    const ray = camera.getForwardRay(100);
+    ray.direction.x += spreadX;
+    ray.direction.y += spreadY;
+    ray.direction.z += spreadX;
+    ray.direction.normalize();
+
+    const pick = scene.pickWithRay(ray, (mesh) => enemyByMesh.has(mesh as Mesh));
+    if (!pick?.hit || !pick.pickedMesh) {
+      continue;
+    }
+    const picked = pick.pickedMesh as Mesh;
+    const enemy = enemyByMesh.get(picked);
+    if (!enemy) {
+      continue;
+    }
+    applyDamageToEnemy(enemy, currentWeapon.damage);
+  }
+};
+
+const setWeapon = (weaponId: WeaponId) => {
+  currentWeapon = weapons[weaponId];
+  updateWeaponUI();
+  updateAmmoUI();
+};
+
+spawnEnemiesInRooms();
+updateHealthUI();
+updateScoreUI();
+updateWeaponUI();
+updateAmmoUI();
 
 const updateEnemies = (deltaSeconds: number) => {
   if (enemies.length === 0) {
@@ -518,7 +624,41 @@ const updateEnemies = (deltaSeconds: number) => {
       now - enemy.lastAttackTime >= enemy.attackCooldownMs
     ) {
       enemy.lastAttackTime = now;
-      applyDamage(enemy.damage);
+      if (enemy.type === "ranged") {
+        const direction = new Vector3(
+          playerPos.x - enemyPos.x,
+          (camera.position.y - enemy.baseY) * 0.2,
+          playerPos.z - enemyPos.z,
+        );
+        const origin = new Vector3(enemyPos.x, enemy.baseY + 0.2, enemyPos.z);
+        spawnProjectile(origin, direction, enemy.damage);
+      } else {
+        applyDamage(enemy.damage);
+      }
+    }
+  }
+};
+
+const updateProjectiles = (deltaSeconds: number) => {
+  if (projectiles.length === 0) {
+    return;
+  }
+  for (let i = projectiles.length - 1; i >= 0; i -= 1) {
+    const projectile = projectiles[i];
+    const move = projectile.velocity.scale(deltaSeconds);
+    projectile.mesh.position.addInPlace(move);
+
+    const toPlayer = projectile.mesh.position.subtract(camera.position);
+    if (toPlayer.lengthSquared() < 0.6) {
+      applyDamage(projectile.damage);
+      projectiles.splice(i, 1);
+      projectile.mesh.dispose();
+      continue;
+    }
+
+    if (Math.abs(projectile.mesh.position.y) > wallHeight + 2) {
+      projectiles.splice(i, 1);
+      projectile.mesh.dispose();
     }
   }
 };
@@ -540,8 +680,21 @@ scene.onKeyboardObservable.add((kbInfo) => {
   if (kbInfo.type !== KeyboardEventTypes.KEYDOWN) {
     return;
   }
-  if (kbInfo.event.code === "KeyR") {
-    reload();
+  switch (kbInfo.event.code) {
+    case "KeyR":
+      reload();
+      break;
+    case "Digit1":
+      setWeapon("pistol");
+      break;
+    case "Digit2":
+      setWeapon("shotgun");
+      break;
+    case "Digit3":
+      setWeapon("smg");
+      break;
+    default:
+      break;
   }
 });
 
@@ -554,6 +707,7 @@ updateAmmoUI();
 engine.runRenderLoop(() => {
   const deltaSeconds = engine.getDeltaTime() / 1000;
   updateEnemies(deltaSeconds);
+  updateProjectiles(deltaSeconds);
   scene.render();
 });
 
